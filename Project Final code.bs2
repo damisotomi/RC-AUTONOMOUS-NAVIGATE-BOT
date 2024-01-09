@@ -1,0 +1,313 @@
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+x_dest VAR Nib      'stores x destination cordinate
+y_dest VAR Nib      'stores y destination cordinate
+x_moves VAR Nib
+y_moves VAR Nib
+
+irPulse VAR Word     ' Stores pulse widths
+remoteCode VAR Byte  ' Stores remote code
+volDown CON 19         'left movement
+volUp CON 18            'right movement
+CHUp CON 16              'forward movement
+CHDown CON 17             'backward movement
+Reversed CON 21
+
+time VAR Word             'store time it takes for ultrasonic sensor to receive the echo
+CmConstant CON 2260
+cmDistance VAR Word
+
+x_counter VAR Nib
+y_counter VAR Nib
+
+pulseLeft VAR Word
+pulseRight VAR Word
+pulseCount VAR Word
+counter VAR Byte
+
+frequency VAR Word
+CompleteLed PIN 7   'green led
+AlarmLed PIN 14      'red led
+
+SEROUT 8, 84, [22, 12, 17] ' Initialize LCD
+PAUSE 5
+
+DEBUG CLS
+Main:
+  FOR frequency = 3000 TO 6000 STEP 1000 'pin 10 connected to the piezospeaker to act as a start/reset indicator or brownout indicator
+  FREQOUT 10,500,frequency           'makes the piezo speaker make a sound once it starts
+  NEXT
+  PAUSE 1000
+  'DEBUG " WELCOME. Cordinates should be less than 5 for x and y. Robot starts at 0,0",CR
+  SEROUT 8, 84, [128, "Welcome."]
+  PAUSE 2000
+  SEROUT 8, 84, [128, "Enter X & Y ", 148, "Initially: (0,0)"]
+  PAUSE 2000
+'get x cord
+x_cord:
+  x_dest=0
+  'DEBUG CLS, "Enter x destination coordinate: ",CR
+  SEROUT 8, 84, [128, "Enter X                 ", 148, "destination.    "]
+  DO
+  IF (IN0=1)  THEN
+    PAUSE 1000
+    x_dest = x_dest + 1
+    'DEBUG CLS, ?x_dest
+    SEROUT 8, 84, [128,"x_dest = ", DEC(x_dest),"                ", 148,"              "]
+  ENDIF
+  LOOP UNTIL (IN1=1)
+  IF x_dest > 3 THEN
+    'DEBUG  CLS, "Enter valid X destination",CR
+    SEROUT 8, 84, [128,"Enter valid X!", 148,"              "]
+    PAUSE 2000
+    GOTO x_cord
+  ENDIF
+
+PAUSE 1000
+
+'get y cord
+y_cord:
+  y_dest=0
+  'DEBUG  CLS, "Enter Y destination coordinate: ",CR
+  SEROUT 8, 84, [128, "Enter Y             ", 148, "destination."]
+  DO
+  IF (IN0=1)  THEN
+    PAUSE 1000
+    y_dest = y_dest + 1
+    'DEBUG  CLS, ?y_dest
+    SEROUT 8, 84, [128,"y_dest = ", DEC(y_dest),"                     ", 148,"              "]
+  ENDIF
+  LOOP UNTIL (IN1=1)
+  IF y_dest > 4 THEN
+    'DEBUG  CLS, "Enter valid Y destination",CR
+    SEROUT 8, 84, [128,"Enter valid Y!", 148, "          "]
+     PAUSE 2000
+    GOTO y_cord
+  ENDIF
+
+PAUSE 500
+
+SEROUT 8, 84, [17, 128,"Moving to:", 148, "(", DEC(x_dest), ",",DEC(y_dest),")"]
+PAUSE 2000
+'check for obstacle before moving
+PULSOUT 15, 5
+PULSIN 15, 1, time
+cmDistance = cmConstant ** time
+'prioritizes y direction first
+PAUSE 2000
+
+
+DEBUG  CLS, CR, "Navigating"
+SEROUT 8, 84, [17, 128,"Navigating Y", 148, "               "]
+PAUSE 2000
+
+DO UNTIL (cmDistance < 15 OR y_moves = y_dest)               'reference distance to obstacle can be changed. I used 15 here
+      'move forward
+
+      pulseCount =52 : pulseLeft = 840 : pulseRight =650 'increase pulsecount to move to the end of the next grid depending on grid size
+      GOSUB Auto_Navigate                                'adjust Pulseleft ot pulseright depending on direction robots veering
+      PULSOUT 15, 5                                       'check for obstacle again
+      PULSIN 15, 1, time
+      cmDistance = cmConstant ** time
+      'DEBUG  CLS,CR, DEC3 cmDistance, " cm"
+      y_moves  =y_moves + 1                                  'update y_moves
+      PAUSE 500
+LOOP
+
+IF cmDistance < 15 THEN GOTO Alarm
+
+PAUSE 2000
+
+'turn right AND check FOR obstacle
+pulseCount = 20  : pulseLeft = 850 : pulseRight = 850
+GOSUB Auto_Navigate
+PULSOUT 15, 5                                               'check for obstacle again
+PULSIN 15, 1, time
+cmDistance = cmConstant ** time
+
+
+
+IF cmDistance < 15 THEN GOTO Alarm
+
+PAUSE 1000
+SEROUT 8, 84, [17, 128,"Navigating X", 148, "               "]
+PAUSE 2000
+
+DO UNTIL (cmDistance < 15 OR x_moves = x_dest)
+      'move forward
+      pulseCount = 45 : pulseLeft = 843 : pulseRight = 650 'increase pulsecount to move to the end of the next grid depending on size
+      GOSUB Auto_Navigate                                 'adjust Pulseleft ot pulseright depending on direction robots veering
+      PULSOUT 15, 5                                       'check for obstacle again
+      PULSIN 15, 1, time
+      cmDistance = cmConstant ** time
+      'DEBUG  CLS, CR, DEC3 cmDistance, " cm"
+      x_moves = x_moves + 1                                     'update x_moves
+      PAUSE 500
+LOOP
+
+IF cmDistance < 15 THEN GOTO Alarm
+
+PAUSE 1000
+
+'checks for completion
+IF x_moves = x_dest AND y_moves = y_dest THEN
+ PAUSE 500 : GOSUB Reversing: GOSUB Completion :GOTO ManualMovement
+ENDIF
+
+
+'----------------------------------------------SUBROUTINES and other LABELS----------------------------------------------------------------------------
+
+Alarm:
+  DEBUG  CLS, CR, DEC3 cmDistance, " cm"
+  counter = 0
+  SEROUT 8, 84, [17, 128,"Obstacle          ", 148, "ahead:", DEC3(cmDistance),"cm     "]
+  PAUSE 2000
+  DO
+     HIGH AlarmLed
+     PAUSE 200
+     LOW AlarmLed
+    PAUSE 200
+    counter = counter + 1
+    FOR frequency = 3000 TO 6000 STEP 1000 ' Adjust the step size for a smoother siren effect
+      FREQOUT 10, 500, frequency  ' Emit sound at the current frequency
+      'PAUSE 20  ' Adjust the pause duration for the rising and falling effect
+    NEXT
+    FOR frequency = 5000 TO 3000 STEP 1000 ' Reverse the frequency to create a falling pitch
+      FREQOUT 10, 500, frequency
+      'PAUSE 20
+    NEXT
+  LOOP UNTIL counter = 3
+  SEROUT 8, 84, [17, 128,"Manual Control", 148, "Active.", "        "]
+  PAUSE 2000
+  GOTO ManualMovement
+
+Auto_Navigate:
+ FOR counter = 1 TO pulseCount
+ PULSOUT 13, pulseLeft
+ PULSOUT 12, pulseRight
+ PAUSE 20
+ NEXT
+RETURN
+
+ManualMovement:
+  DO
+
+  'PULSOUT 15, 5
+  'PULSIN 15, 1, time
+  'cmDistance = cmConstant ** time
+
+  'SEROUT 8, 84, [17, 128,"Obstacle          ", 148, "ahead:", DEC3(cmDistance),"cm     "]
+  'PAUSE 100
+
+  GOSUB CheckRemoteCode:
+  LOOP UNTIL  remoteCode=volDown OR remoteCode =volUp OR remoteCode =CHUp OR remoteCode =CHDown
+  IF remoteCode=volDown THEN
+  pulseLeft = 705 : pulseRight= 705: pulseCount = 5
+  GOTO Manual_Navigate
+  ENDIF
+  IF remoteCode =volUp THEN
+  pulseLeft = 796 : pulseRight= 796: pulseCount = 5
+  GOTO Manual_Navigate
+  ENDIF
+  IF remoteCode =CHUp THEN
+  pulseLeft = 843 : pulseRight= 650: pulseCount = 10
+  GOTO Manual_Navigate
+  ENDIF
+  IF remoteCode =CHDown  THEN
+  pulseLeft = 650 : pulseRight= 850: pulseCount = 10
+  GOTO Manual_Navigate
+  ENDIF
+
+CheckRemoteCode:
+   remoteCode = 0 ' Clear previous remoteCode
+  ' Wait for resting state between messages to end.
+   DO
+    RCTIME 9, 1, irPulse
+   LOOP UNTIL (irPulse > 1000)
+    ' Measure start pulse. If out of range, then retry at Get_Pulses label.
+    RCTIME 9, 0, irPulse
+    IF irPulse > 1125 OR irPulse < 675 THEN GOTO CheckRemoteCode
+    ' Get Data bit pulses.
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT0 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT1 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT2 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT3 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT4 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT5 = 1
+    RCTIME 9, 0, irPulse
+    IF irPulse > 300 THEN remoteCode.BIT6 = 1
+    ' Map digit keys to actual values.
+    IF (remoteCode < 10) THEN remoteCode = remoteCode + 1
+    IF (remoteCode = 10) THEN remoteCode = 0
+RETURN
+
+Manual_Navigate:
+ FOR counter = 1 TO pulseCount
+ PULSOUT 13, pulseLeft
+ PULSOUT 12, pulseRight
+ PAUSE 20
+ NEXT
+ remoteCode=0
+ GOTO ManualMovement
+
+Completion:
+  'DEBUG  CLS, CR, DEC3 cmDistance, " cm"
+  counter=0
+
+  DO
+     HIGH CompleteLed
+     PAUSE 200
+     LOW CompleteLed
+     PAUSE 200
+     counter =counter+1
+     FOR frequency = 3000 TO 6000 STEP 1000 'pin 10 connected to the piezospeaker makes a sound
+        FREQOUT 10,500,frequency
+     NEXT
+  LOOP UNTIL counter = 2
+  SEROUT 8, 84, [17, 128," Journey          ", 148, "Complete.", "        "]
+  PAUSE 2000
+  SEROUT 8, 84, [17, 128,"Manual Control", 148, "Active.", "        "]
+  PAUSE 2000
+RETURN
+
+Reversing:
+  SEROUT 8, 84, [17, 128,"Reversing ", 148, "             "]
+  PAUSE 2000
+  pulseCount = 21  : pulseLeft = 650 : pulseRight = 650
+  GOSUB Auto_Navigate
+  PAUSE 500
+  pulseCount = 21  : pulseLeft = 650 : pulseRight = 650
+  GOSUB Auto_Navigate
+  PAUSE 500
+  DO WHILE (x_dest > 0)
+    PULSOUT 15, 5                                               'check for obstacle again
+    PULSIN 15, 1, time
+    cmDistance = cmConstant ** time
+    IF cmDistance < 15 THEN GOTO Alarm
+    pulseCount = 45 : pulseLeft = 840 : pulseRight = 650
+    GOSUB Auto_Navigate
+    x_dest=x_dest - 1
+    PAUSE 500
+  LOOP
+  PAUSE 500
+  pulseCount = 21  : pulseLeft = 650 : pulseRight = 650
+  GOSUB Auto_Navigate
+  PAUSE 500
+  DO WHILE (y_dest >0)
+    PULSOUT 15, 5                                               'check for obstacle again
+    PULSIN 15, 1, time
+    cmDistance = cmConstant ** time
+    IF cmDistance < 15 THEN GOTO Alarm
+    pulseCount = 52 : pulseLeft = 840 : pulseRight = 650
+    GOSUB Auto_Navigate
+    y_dest=y_dest-1
+    PAUSE 500
+  LOOP
+RETURN
